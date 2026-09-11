@@ -1,0 +1,263 @@
+// cronnext.nv — when a schedule fires next, and what the clocks did
+// to it.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// THIS MODULE HOLDS THE LOAD-BEARING INTERFACE, `CronFire`, and the
+// argument for it is that **a cron expression is a statement about
+// wall clocks.** `0 9 * * 1` means nine in the morning, local, every
+// Monday. The UTC instant that means moves by an hour twice a year,
+// and the wall time does not move at all.
+//
+// Two consequences, and the whole shape of this module follows from
+// them:
+//
+// FIRST, a next fire cannot be computed from the previous one by
+// adding a duration. `previous + 604800` is right for fifty weeks of
+// the year and an hour out for the other two, and the error does not
+// accumulate visibly — the job simply runs at 08:00 for six months and
+// nobody files anything. So `next_after` searches the CIVIL calendar
+// and applies the zone at the end, which is why it takes a zone and an
+// instant rather than an instant alone.
+//
+// SECOND, a fire can land on a wall time that did not exist, or on one
+// that happened twice, and a scheduler has to be TOLD. That is what
+// `CronFire` is. An answer of `Int` can say when; it cannot say "your
+// 02:30 backup did not run today because the clocks skipped it", which
+// is the one thing an operator needs to hear.
+//
+// THE THREE POLICIES ARE REAL IMPLEMENTATIONS' BEHAVIOUR, not a menu
+// somebody invented:
+//
+//   `CronDstSkip`     the fire does not happen. Quartz's default for a
+//                     trigger whose time is skipped.
+//   `CronDstRunOnce`  a skipped fire runs at the instant the clock
+//                     jumped to, and a repeated wall time fires only
+//                     the first time. Vixie cron's rule for a job
+//                     whose hour and minute are both fixed, and the
+//                     default here.
+//   `CronDstRunBoth`  a repeated wall time fires at BOTH instants.
+//                     What a metering job wants, because the hour
+//                     really did happen twice and there are two hours
+//                     of readings.
+//
+// Vixie's rule has a second half this package does NOT implement and
+// says so: a job with a WILDCARD hour — `*/10 * * * *` — is run once
+// per wall-clock occurrence in cron, so the repeated hour runs its ten
+// fires twice and the skipped hour runs none. That falls out of
+// `CronDstRunBoth` for the repeat and `CronDstSkip` for the gap, and
+// mixing the two per schedule is a policy this interface does not have
+// a value for. It is named here as a known limit rather than
+// approximated.
+
+use civil
+use cronerr
+use cronexpr
+use tzzone
+
+// What a fire looks like when a schedule and a zone have both had
+// their say.
+//
+// THE LOAD-BEARING INTERFACE. One variant per thing that can have
+// happened to a wall time, each carrying the instant a scheduler
+// actually sleeps until.
+pub enum CronFire
+    // The ordinary case. `utc_second` is when to run, `local` is what
+    // the wall clock will read, and `offset_seconds` is the offset in
+    // force — carried because a log line that says `09:00 +02:00` is
+    // readable six months later and `09:00` is not.
+    CronFireAt(utc_second: Int, local: civil.CivilDateTime, offset_seconds: Int)
+    // The wall time the schedule asked for did not exist, and the
+    // policy moved the fire. `wanted` is the time that was asked for
+    // and `local` is when it will actually run, so a scheduler can log
+    // both. Only `CronDstRunOnce` produces this.
+    CronFireShifted(utc_second: Int, local: civil.CivilDateTime, offset_seconds: Int,
+                    wanted: civil.CivilDateTime)
+    // The wall time happens twice and this is one of them.
+    // `occurrence` is 1 or 2. Only `CronDstRunBoth` produces the
+    // second; the other policies answer `CronFireAt` for the first and
+    // never mention the second.
+    CronFireRepeat(utc_second: Int, local: civil.CivilDateTime, offset_seconds: Int,
+                   occurrence: Int)
+    // There is no next fire inside the search bound. Two schedules
+    // answer this and they are very different: `0 0 30 2 *` can never
+    // fire, and `0 0 1 1 *` with a year field that has run out will
+    // not fire again. `cronexpr.is_satisfiable` is what tells them
+    // apart, and a scheduler should log which.
+    CronFireNever
+
+// What to do about a fire that daylight saving moved.
+pub enum CronDst
+    // A fire whose wall time does not exist does not happen.
+    CronDstSkip
+    // A fire whose wall time does not exist runs at the instant the
+    // clock jumped to; a wall time that happens twice fires once.
+    CronDstRunOnce
+    // A wall time that happens twice fires at both instants; one that
+    // does not exist is skipped.
+    CronDstRunBoth
+
+// The policy to pass when a caller has no opinion: `CronDstRunOnce`.
+//
+// Vixie cron's, and therefore the one an operator's expectations were
+// formed by.
+pub fn default_dst() -> CronDst []
+    todo("cron-nv.cronnext.default_dst")
+
+// The next fire strictly after a UTC instant.
+//
+// The call this package exists for. The search runs in civil time in
+// the zone, so a schedule's wall time is what stays fixed.
+//
+// ```novo
+// use cronexpr
+// use cronnext
+// use tzdata
+//
+// fn main() [io]
+//     let db = tzdata.data_compact()
+//     match tzdata.zone(db, "Europe/Berlin")
+//         Err(_) => println("no such zone")
+//         Ok(z)  =>
+//             match cronexpr.parse("0 9 * * 1")
+//                 Err(_) => println("not a crontab line")
+//                 Ok(s)  =>
+//                     match cronnext.next_after(s, z, 1750000000, cronnext.default_dst())
+//                         CronFireAt(at, _, _)             => println(str.from_int(at))
+//                         CronFireShifted(at, _, _, _)     => println(str.from_int(at))
+//                         CronFireRepeat(at, _, _, _)      => println(str.from_int(at))
+//                         CronFireNever                    => println("never")
+// ```
+pub fn next_after(s: cronexpr.CronSchedule, z: tzzone.TzZone, after_utc_second: Int,
+                  dst: CronDst) -> CronFire []
+    todo("cron-nv.cronnext.next_after")
+
+// The last fire strictly before a UTC instant.
+//
+// What a scheduler that has been down asks on the way back up: which
+// runs were missed. The same policies apply, in reverse.
+pub fn prev_before(s: cronexpr.CronSchedule, z: tzzone.TzZone, before_utc_second: Int,
+                   dst: CronDst) -> CronFire []
+    todo("cron-nv.cronnext.prev_before")
+
+// The next `count` fires after an instant, ascending.
+//
+// Stops early at `CronFireNever`, so a list shorter than `count` means
+// the schedule ran out. What a "next five runs" panel is built from,
+// and cheaper than calling `next_after` in a loop because the search
+// keeps its place.
+pub fn next_n(s: cronexpr.CronSchedule, z: tzzone.TzZone, after_utc_second: Int, dst: CronDst,
+              count: Int) -> [CronFire] []
+    todo("cron-nv.cronnext.next_n")
+
+// Every fire in the half-open UTC range `[from_second, to_second)`.
+//
+// What a catch-up run needs after an outage, and what a calendar view
+// of a month is drawn from.
+pub fn fires_between(s: cronexpr.CronSchedule, z: tzzone.TzZone, from_second: Int, to_second: Int,
+                     dst: CronDst) -> [CronFire] []
+    todo("cron-nv.cronnext.fires_between")
+
+// Whether the schedule fires at exactly this UTC instant in this zone.
+//
+// A daemon that wakes once a minute asks this rather than computing a
+// next fire; it is a match rather than a search.
+pub fn matches_at(s: cronexpr.CronSchedule, z: tzzone.TzZone, utc_second: Int) -> Bool []
+    todo("cron-nv.cronnext.matches_at")
+
+// ── the zone-free half ───────────────────────────────────────────────
+//
+// Civil time in, civil time out, no zone anywhere. This is the part
+// that is pure calendar arithmetic, and it is public for two reasons:
+// a caller already working in one zone's wall clock has no conversion
+// to do, and every test of the field logic can be written without a
+// database.
+
+// Whether the schedule matches a civil date-time, ignoring zones
+// entirely.
+//
+// The seconds, minutes, hours, month and year fields are each a set
+// test; the two day fields go through `matches_day`, which is where
+// the union rule lives.
+pub fn matches_civil(s: cronexpr.CronSchedule, dt: civil.CivilDateTime) -> Bool []
+    todo("cron-nv.cronnext.matches_civil")
+
+// Whether the schedule's two day fields admit this date.
+//
+// Where the POSIX union rule is applied, and where the Quartz
+// extensions are evaluated — `L`, `W` and `#` all need to know which
+// month they are in, which is exactly what this call has and a bitset
+// does not.
+pub fn matches_day(s: cronexpr.CronSchedule, d: civil.CivilDate) -> Bool []
+    todo("cron-nv.cronnext.matches_day")
+
+// The next civil date-time strictly after `from` that the schedule
+// matches, or `?` where there is none inside the search bound.
+//
+// No zone, so no gap and no overlap: this is the answer before the
+// clocks are consulted, and `next_after` is this plus `tzlocal.resolve`
+// plus a policy.
+pub fn next_civil_after(s: cronexpr.CronSchedule,
+                        from: civil.CivilDateTime) -> ?civil.CivilDateTime []
+    todo("cron-nv.cronnext.next_civil_after")
+
+// The last civil date-time strictly before `from` that the schedule
+// matches, or `?`.
+pub fn prev_civil_before(s: cronexpr.CronSchedule,
+                         from: civil.CivilDateTime) -> ?civil.CivilDateTime []
+    todo("cron-nv.cronnext.prev_civil_before")
+
+// How many years forward or back a search will look before answering
+// that there is no fire.
+//
+// Bounded on purpose, and the bound is public so a caller knows what
+// `CronFireNever` means: not "never" in the abstract, but "not in the
+// next `search_years()` years". Four, which is croniter's default and
+// enough to cross a leap year from any starting point.
+pub fn search_years() -> Int []
+    todo("cron-nv.cronnext.search_years")
+
+// ── reading a fire ───────────────────────────────────────────────────
+
+// The instant a fire happens at, or `?` for `CronFireNever`.
+//
+// The accessor a scheduler that does not care WHY uses, so the common
+// path is one call rather than a four-arm match.
+pub fn instant_of(f: CronFire) -> ?Int []
+    todo("cron-nv.cronnext.instant_of")
+
+// The wall-clock time a fire happens at, or `?` for `CronFireNever`.
+pub fn local_of(f: CronFire) -> ?civil.CivilDateTime []
+    todo("cron-nv.cronnext.local_of")
+
+// Whether there is no fire.
+pub fn is_never(f: CronFire) -> Bool []
+    todo("cron-nv.cronnext.is_never")
+
+// Whether daylight saving moved or duplicated this fire — anything but
+// `CronFireAt` and `CronFireNever`.
+//
+// The one-line test for "is this worth a log line", so an operator
+// hears about the twice-a-year cases and nothing else.
+pub fn is_dst_affected(f: CronFire) -> Bool []
+    todo("cron-nv.cronnext.is_dst_affected")
+
+// A sentence about what the clocks did to this fire, or `""` for an
+// ordinary one.
+//
+// The log line itself: `"the wall clock skipped 02:30, so this ran at
+// 03:00"`. Written here rather than by every caller, because the
+// wording is the part that makes the twice-yearly surprise
+// intelligible and it should not be reinvented in each scheduler.
+pub fn dst_note(f: CronFire) -> Str []
+    todo("cron-nv.cronnext.dst_note")
+
+// A fire's own validation: whether a schedule and a zone can produce
+// this fire at all.
+//
+// `Err` names the field that made it impossible, so a scheduler that
+// stored a schedule and a zone separately can tell an operator which
+// of the two is wrong rather than that "the job will not run".
+pub fn explain_never(s: cronexpr.CronSchedule,
+                     z: tzzone.TzZone) -> Result<Int, cronerr.CronError> []
+    todo("cron-nv.cronnext.explain_never")

@@ -1,0 +1,130 @@
+// crondesc.nv — a schedule, in words a person can check.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// WHY A LIBRARY SHOULD DO THIS AT ALL. A crontab line is write-only:
+// `0 9 * * 1` is five tokens somebody typed six months ago, and the
+// only way to find out what it does is to know cron. Every scheduler
+// with a user interface ends up printing a sentence beside the
+// expression, and every one of them writes its own — which is how a
+// tool comes to say "every Monday at 9:00" for `0 9 * * 1` and the
+// same sentence for `0 9 * * MON,1`, which fires once and not twice.
+//
+// THE SENTENCE IS BUILT FROM THE TERMS, NOT FROM THE SET, which is
+// what makes it a description rather than an enumeration. `*/15` is
+// "every 15 minutes"; `0,15,30,45` is "at minute 0, 15, 30 and 45";
+// the two fire at the same moments and a person reading a
+// configuration file wants to be told which one is written there.
+// `cronfield.CronField` keeps both halves for exactly this.
+//
+// IT IS NOT A TRANSLATION LAYER. One language, English, and the
+// vocabulary is fixed. A caller who needs another language needs the
+// PARTS — which field said what — and that is what `describe_field` and
+// `CronPhrase` are for: the sentence is assembled from labelled
+// pieces, so somebody else can assemble a different sentence from the
+// same pieces without reparsing anything.
+//
+// AND IT NEVER GUESSES. A schedule this module cannot say cleanly is
+// described by its fields rather than by an approximation: "at minute
+// 0, on the last Friday of the month" is long, and it is right, and a
+// sentence that rounded it to "monthly" would be a sentence somebody
+// acts on.
+
+use cronerr
+use cronexpr
+use cronfield
+
+// One labelled piece of a description.
+//
+// The seam a translator needs: the pieces are named by field, so a
+// caller assembling a sentence in another language has the structure
+// rather than a string to pattern-match.
+pub struct CronPhrase
+    // Which column this phrase describes. `CronFieldWhole` for the
+    // phrases that are about the schedule rather than a field — the
+    // day-union note, and the shorthand.
+    field: cronerr.CronFieldKind
+    // The English words: `"every 15 minutes"`, `"on Monday"`.
+    text: Str
+    // Whether this field constrains anything. A `*` field contributes
+    // a phrase with `constrains = false` and empty text, so a caller
+    // iterating the seven columns sees all seven.
+    constrains: Bool
+
+// A one-line description of a schedule.
+//
+// ```novo
+// use crondesc
+// use cronexpr
+//
+// fn main() [io]
+//     match cronexpr.parse("0 9 * * 1")
+//         Ok(s)  => println(crondesc.describe(s))
+//         Err(_) => println("not a crontab line")
+// ```
+pub fn describe(s: cronexpr.CronSchedule) -> Str []
+    todo("cron-nv.crondesc.describe")
+
+// The same sentence, with the time of day written for a twelve-hour
+// clock: `"every Monday at 9:00 AM"`.
+//
+// A separate function rather than an option, because the choice is a
+// locale convention and a caller that has one has it for every
+// schedule it prints.
+pub fn describe_12_hour(s: cronexpr.CronSchedule) -> Str []
+    todo("cron-nv.crondesc.describe_12_hour")
+
+// The labelled pieces the sentence is assembled from, in field order.
+//
+// Seven of them, one per column, whether or not the column constrains
+// anything.
+pub fn phrases(s: cronexpr.CronSchedule) -> [CronPhrase] []
+    todo("cron-nv.crondesc.phrases")
+
+// One field's phrase, on its own.
+//
+// What a form puts under the box a person is editing, updating as they
+// type.
+pub fn describe_field(f: cronfield.CronField) -> Str []
+    todo("cron-nv.crondesc.describe_field")
+
+// The shortest true thing that can be said about how OFTEN a schedule
+// fires: `"every minute"`, `"hourly"`, `"daily"`, `"weekly"`,
+// `"monthly"`, `"yearly"`, or `""` where none of those is exactly
+// right.
+//
+// The empty answer is the important one. A schedule that fires at 09:00
+// on weekdays is not "daily", and a summary that said so would be a
+// summary somebody schedules a deployment around.
+pub fn cadence(s: cronexpr.CronSchedule) -> Str []
+    todo("cron-nv.crondesc.cadence")
+
+// The note about the two day fields, or `""` where it does not apply.
+//
+// `"on the 13th of the month, and also on every Friday"` — the POSIX
+// union rule said out loud, because it is the rule a reader of the
+// expression is most likely to have got backwards.
+pub fn day_rule_note(s: cronexpr.CronSchedule) -> Str []
+    todo("cron-nv.crondesc.day_rule_note")
+
+// The weekday's name in full: `"Monday"`.
+//
+// Answers `""` outside `0-7`. Both `0` and `7` are Sunday, which is
+// the one place a naive table is wrong.
+pub fn weekday_name(value: Int) -> Str []
+    todo("cron-nv.crondesc.weekday_name")
+
+// The month's name in full: `"January"`.
+pub fn month_name(value: Int) -> Str []
+    todo("cron-nv.crondesc.month_name")
+
+// An hour and a minute as a 24-hour clock time: `"09:00"`.
+pub fn clock_time(hour: Int, minute: Int) -> Str []
+    todo("cron-nv.crondesc.clock_time")
+
+// An ordinal, in words: `"first"`, `"second"`, `"last"`.
+//
+// What `5#3` and `5L` are described with, and public because the same
+// words are wanted wherever a caller writes its own sentence.
+pub fn ordinal_word(n: Int) -> Str []
+    todo("cron-nv.crondesc.ordinal_word")

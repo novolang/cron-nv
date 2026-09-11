@@ -1,0 +1,142 @@
+// crondesc_tests.nv — the sentence, and the two schedules it must not
+// give the same one to.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: cron-nv.<module>.<fn>`.
+// That is the expected result until the bodies land.
+//
+// WHAT MAKES A DESCRIPTION WORTH TESTING is not that it reads well —
+// that is a judgement — but that it is FAITHFUL. Two schedules that
+// fire differently must not be described the same way, a description
+// must be built from what was written rather than from the set it
+// denotes, and a schedule nothing short can be said about must be
+// described at length rather than rounded.
+
+use std.test
+use std.list
+use cronerr
+use crondesc
+use cronexpr
+use cronfield
+
+@test
+fn test_the_sentence_says_the_schedule() [io]
+    test.case("a weekly job")
+    match cronexpr.parse("0 9 * * 1")
+        Ok(s)  => test.assert(crondesc.describe(s) == "at 09:00, on Monday")
+        Err(_) => test.assert(false)
+
+    test.case("the twelve-hour spelling is a different call, not an option")
+    match cronexpr.parse("0 9 * * 1")
+        Ok(s)  => test.assert(crondesc.describe_12_hour(s) == "at 9:00 AM, on Monday")
+        Err(_) => test.assert(false)
+
+    test.case("every minute")
+    test.assert(crondesc.describe(cronexpr.every_minute()) == "every minute")
+
+@test
+fn test_the_description_comes_from_the_terms_and_not_the_set() [io]
+    // The two fire at the same moments. A description built from the
+    // bitset could not tell them apart, and a person reading a
+    // configuration file wants to be told which one is written there.
+    test.case("a step is described as a step")
+    match cronexpr.parse("*/15 * * * *")
+        Ok(s)  => test.assert(crondesc.describe(s) == "every 15 minutes")
+        Err(_) => test.assert(false)
+
+    test.case("and a list as a list")
+    match cronexpr.parse("0,15,30,45 * * * *")
+        Ok(s)  => test.assert(crondesc.describe(s) == "at minute 0, 15, 30 and 45")
+        Err(_) => test.assert(false)
+
+@test
+fn test_the_pieces_are_labelled_so_another_language_can_be_built() [io]
+    match cronexpr.parse("0 9 * * 1")
+        Err(_) => test.assert(false)
+        Ok(s)  =>
+            test.case("seven phrases, one per column, in field order")
+            let ps = crondesc.phrases(s)
+            test.assert(list.len(ps) == 7)
+
+            test.case("a wildcard column contributes a phrase that constrains nothing")
+            test.assert(ps[3].constrains == false)
+            test.assert(ps[3].text == "")
+            match ps[3].field
+                CronFieldDayOfMonth => test.assert(true)
+                _                   => test.assert(false)
+
+            test.case("and a restricted one carries its words")
+            test.assert(ps[5].constrains)
+            test.assert(ps[5].text == "on Monday")
+
+            test.case("one field's phrase can be asked for on its own")
+            test.assert(crondesc.describe_field(s.hour) == "at 09:00")
+            test.assert(crondesc.describe_field(cronfield.any_field(CronFieldHour)) == "")
+
+@test
+fn test_the_cadence_is_empty_when_no_short_word_is_true() [io]
+    test.case("a shorthand's cadence is the word it is named for")
+    match cronexpr.parse_shorthand("@daily")
+        Ok(s)  => test.assert(crondesc.cadence(s) == "daily")
+        Err(_) => test.assert(false)
+
+    test.case("every minute is `every minute`")
+    test.assert(crondesc.cadence(cronexpr.every_minute()) == "every minute")
+
+    test.case("weekdays at nine is NOT daily, and the answer is empty")
+    // The important case: a summary that said "daily" here is a
+    // summary somebody schedules a deployment around.
+    match cronexpr.parse("0 9 * * 1-5")
+        Ok(s)  => test.assert(crondesc.cadence(s) == "")
+        Err(_) => test.assert(false)
+
+@test
+fn test_the_union_rule_is_said_out_loud() [io]
+    test.case("both day fields restricted gets a note")
+    match cronexpr.parse("0 0 13 * 5")
+        Ok(s)  =>
+            test.assert(crondesc.day_rule_note(s)
+                        == "on the 13th of the month, and also on every Friday")
+        Err(_) => test.assert(false)
+
+    test.case("and a schedule with one wildcard day field gets none")
+    match cronexpr.parse("0 0 13 * *")
+        Ok(s)  => test.assert(crondesc.day_rule_note(s) == "")
+        Err(_) => test.assert(false)
+
+@test
+fn test_the_extensions_are_described_at_length_rather_than_rounded() [io]
+    test.case("the third Friday is said as the third Friday")
+    match cronexpr.parse_with("0 0 0 ? * 6#3", CronDialectQuartz)
+        Ok(s)  => test.assert(crondesc.describe(s) == "at 00:00, on the third Friday")
+        Err(_) => test.assert(false)
+
+    test.case("and the last day of the month is not `monthly`")
+    match cronexpr.parse_with("0 0 0 L * ?", CronDialectQuartz)
+        Ok(s)  =>
+            test.assert(crondesc.describe(s) == "at 00:00, on the last day of the month")
+            test.assert(crondesc.cadence(s) == "")
+        Err(_) => test.assert(false)
+
+@test
+fn test_the_words_are_published_so_a_caller_can_reuse_them() [io]
+    test.case("weekday names, with Sunday at both ends of the range")
+    test.assert(crondesc.weekday_name(1) == "Monday")
+    test.assert(crondesc.weekday_name(0) == "Sunday")
+    test.assert(crondesc.weekday_name(7) == "Sunday")
+    test.assert(crondesc.weekday_name(8) == "")
+
+    test.case("month names")
+    test.assert(crondesc.month_name(1) == "January")
+    test.assert(crondesc.month_name(13) == "")
+
+    test.case("clock times are zero-padded on both halves")
+    test.assert(crondesc.clock_time(9, 0) == "09:00")
+    test.assert(crondesc.clock_time(23, 5) == "23:05")
+
+    test.case("ordinals, with five spelled as last for the extensions")
+    test.assert(crondesc.ordinal_word(1) == "first")
+    test.assert(crondesc.ordinal_word(3) == "third")
+
+    test.case("the field names the refusals use are the words the sentence uses")
+    test.assert(cronerr.field_name(CronFieldDayOfMonth) == "day of month")

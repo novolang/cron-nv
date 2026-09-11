@@ -1,0 +1,247 @@
+// cronexpr_tests.nv — the expression, the fields, and the refusals.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: cron-nv.<module>.<fn>`.
+// That is the expected result until the bodies land.
+//
+// THE VECTORS ARE CRONITER'S AND QUARTZ'S OWN. Every expression below
+// appears in one of the two reference suites — croniter's
+// `test_croniter.py` for the Unix dialect and Quartz's
+// `CronExpressionTest` for the extensions — and the answers are
+// theirs. Where the two disagree, the dialect is what decides, which
+// is the reason `CronDialect` is a value rather than a guess.
+
+use std.test
+use std.list
+use cronerr
+use cronexpr
+use cronfield
+
+@test
+fn test_a_crontab_line_parses_to_seven_fields() [io]
+    test.case("the five-field line keeps what was written")
+    match cronexpr.parse("0 9 * * 1")
+        Ok(s)  =>
+            test.assert(s.source == "0 9 * * 1")
+            // A five-field line gets a seconds field of one value, so
+            // every schedule has the same shape.
+            test.assert(cronfield.matches(s.second, 0))
+            test.assert(cronfield.matches(s.second, 30) == false)
+            test.assert(cronfield.matches(s.hour, 9))
+            test.assert(cronfield.is_wildcard(s.day_of_month))
+            test.assert(cronfield.is_wildcard(s.year))
+        Err(_) => test.assert(false)
+
+    test.case("the same tokens mean different things in different dialects")
+    // `0 0 1 1 *` is New Year's Day in five fields and the first
+    // second of every January minute in six.
+    match cronexpr.parse_with("0 0 1 1 *", CronDialectUnix)
+        Ok(s)  => test.assert(cronfield.matches(s.hour, 0))
+        Err(_) => test.assert(false)
+    match cronexpr.parse_with("0 0 1 1 * *", CronDialectSixField)
+        Ok(s)  => test.assert(cronfield.matches(s.second, 0))
+        Err(_) => test.assert(false)
+
+    test.case("a field count the dialect does not have names both numbers")
+    match cronexpr.parse_with("0 9 * *", CronDialectUnix)
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronBadFieldCount(found, expected) =>
+                    test.assert(found == 4)
+                    test.assert(expected == 5)
+                _                                  => test.assert(false)
+
+@test
+fn test_the_shorthands_are_spellings_and_reboot_is_not_one() [io]
+    test.case("@daily is midnight every day")
+    test.assert(cronexpr.is_shorthand("@daily"))
+    match cronexpr.parse_shorthand("@daily")
+        Ok(s)  =>
+            test.assert(cronexpr.format(s) == "0 0 * * *")
+            match cronexpr.parse("0 0 * * *")
+                Ok(plain) => test.assert(cronexpr.equivalent(s, plain))
+                Err(_)    => test.assert(false)
+        Err(_) => test.assert(false)
+
+    test.case("@reboot is not a schedule and is not accepted as one")
+    test.assert(cronexpr.is_shorthand("@reboot") == false)
+    match cronexpr.parse_shorthand("@reboot")
+        Ok(_)  => test.assert(false)
+        Err(_) => test.assert(true)
+
+@test
+fn test_three_spellings_of_one_set_are_one_value() [io]
+    test.case("*/15, 0,15,30,45 and 0-59/15 admit the same minutes")
+    match cronexpr.parse("*/15 * * * *")
+        Err(_) => test.assert(false)
+        Ok(a)  =>
+            match cronexpr.parse("0,15,30,45 * * * *")
+                Err(_) => test.assert(false)
+                Ok(b)  =>
+                    test.assert(cronexpr.equivalent(a, b))
+                    test.assert(cronfield.values(a.minute) == [0, 15, 30, 45])
+                    // The terms survive, which is what lets the
+                    // description and the printer differ.
+                    test.assert(cronfield.format_field(a.minute) == "*/15")
+                    test.assert(cronfield.format_field(b.minute) == "0,15,30,45")
+
+@test
+fn test_a_field_answers_the_next_value_and_says_when_it_runs_out() [io]
+    match cronfield.parse_field(CronFieldMinute, "*/15", CronDialectUnix)
+        Err(_) => test.assert(false)
+        Ok(f)  =>
+            test.case("the next value at or above a minute")
+            test.assert(cronfield.next_value(f, 0) == Some(0))
+            test.assert(cronfield.next_value(f, 1) == Some(15))
+            test.assert(cronfield.prev_value(f, 44) == Some(30))
+
+            test.case("and nothing above 45, which is how the hour rolls over")
+            test.assert(cronfield.next_value(f, 46) == None)
+            test.assert(cronfield.has_dynamic_terms(f) == false)
+            test.assert(cronfield.is_unset(f) == false)
+
+    test.case("a wildcard field constrains nothing")
+    let any = cronfield.any_field(CronFieldHour)
+    test.assert(cronfield.is_wildcard(any))
+    test.assert(cronfield.matches(any, 23))
+
+@test
+fn test_names_are_case_insensitive_and_sunday_is_both_ends() [io]
+    test.case("month and weekday names resolve to numbers")
+    test.assert(cronfield.value_of_name(CronFieldMonth, "jan") == Some(1))
+    test.assert(cronfield.value_of_name(CronFieldMonth, "DEC") == Some(12))
+    test.assert(cronfield.value_of_name(CronFieldDayOfWeek, "Mon") == Some(1))
+    test.assert(cronfield.name_of(CronFieldMonth, 3) == "MAR")
+
+    test.case("an hour field knows no names")
+    test.assert(cronfield.value_of_name(CronFieldHour, "noon") == None)
+
+    test.case("both 0 and 7 are Sunday, which is why the range is 0-7")
+    let bounds = cronerr.field_bounds(CronFieldDayOfWeek)
+    test.assert(bounds.0 == 0)
+    test.assert(bounds.1 == 7)
+    match cronexpr.parse("0 0 * * 0")
+        Err(_) => test.assert(false)
+        Ok(a)  =>
+            match cronexpr.parse("0 0 * * 7")
+                Ok(b)  => test.assert(cronexpr.equivalent(a, b))
+                Err(_) => test.assert(false)
+
+@test
+fn test_every_refusal_names_the_field_and_the_column() [io]
+    test.case("a value outside the field carries the bounds with it")
+    match cronexpr.parse("0 0 * * 8")
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronBadValue(field, value, low, high) =>
+                    test.assert(value == 8)
+                    test.assert(low == 0)
+                    test.assert(high == 7)
+                    test.assert(cronerr.field_name(field) == "day of week")
+                _                                     => test.assert(false)
+            test.assert(cronerr.offset_of(e) >= 0)
+            test.assert(e.message() != "")
+
+    test.case("a backwards range is refused rather than wrapped")
+    match cronexpr.parse("0 0 * * FRI-MON")
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronBadRange(_, _, _, _) => test.assert(true)
+                _                        => test.assert(false)
+
+    test.case("a zero step is refused")
+    match cronexpr.parse("*/0 * * * *")
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronBadStep(_, step, _) => test.assert(step == 0)
+                _                       => test.assert(false)
+
+    test.case("a name the field does not know is refused by name")
+    match cronexpr.parse("0 0 * FRIDAY *")
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match cronerr.field_of(e)
+                CronFieldMonth => test.assert(true)
+                _              => test.assert(true)
+
+    test.case("an empty expression is refused as a whole")
+    match cronexpr.parse("")
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronEmptyExpression => test.assert(cronerr.offset_of(e) == 0 - 1)
+                _                   => test.assert(false)
+
+    test.case("check answers every refusal, not the first")
+    test.assert(list.len(cronexpr.check("99 99 * * *", CronDialectUnix)) == 2)
+    test.assert(list.len(cronexpr.check("0 9 * * 1", CronDialectUnix)) == 0)
+
+@test
+fn test_the_quartz_extensions_are_refused_outside_quartz() [io]
+    test.case("L, W and # are Quartz's and a Unix line may not use them")
+    match cronexpr.parse("0 0 L * *")
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronNotInDialect(_, text, _) => test.assert(text == "L")
+                _                            => test.assert(false)
+
+    test.case("and are accepted, with their arguments checked, in Quartz")
+    match cronexpr.parse_with("0 0 0 ? * 6#3", CronDialectQuartz)
+        Err(_) => test.assert(false)
+        Ok(s)  =>
+            test.assert(cronexpr.uses_extensions(s))
+            test.assert(cronfield.has_dynamic_terms(s.day_of_week))
+            test.assert(cronfield.is_unset(s.day_of_month))
+
+    test.case("an occurrence outside 1-5 is its own refusal")
+    match cronexpr.parse_with("0 0 0 ? * 6#9", CronDialectQuartz)
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronBadExtensionArg(_, value, _) => test.assert(value == 9)
+                _                                => test.assert(false)
+
+    test.case("Quartz wants exactly one of the two day fields unset")
+    match cronexpr.parse_with("0 0 0 * * 6", CronDialectQuartz)
+        Ok(_)  => test.assert(false)
+        Err(e) =>
+            match e
+                CronDayFieldConflict(_) => test.assert(true)
+                _                       => test.assert(false)
+
+@test
+fn test_the_two_day_fields_are_a_union_when_both_are_restricted() [io]
+    // The POSIX rule, and the one an implementation gets wrong by
+    // ANDing: `0 0 13 * 5` is the 13th AND every Friday, not Friday
+    // the 13th.
+    test.case("both restricted is a union")
+    match cronexpr.parse("0 0 13 * 5")
+        Ok(s)  => test.assert(cronexpr.fires_on_either_day(s))
+        Err(_) => test.assert(false)
+
+    test.case("one wildcard is not")
+    match cronexpr.parse("0 0 13 * *")
+        Ok(s)  => test.assert(cronexpr.fires_on_either_day(s) == false)
+        Err(_) => test.assert(false)
+
+@test
+fn test_a_schedule_that_can_never_fire_still_parses() [io]
+    test.case("the 30th of February parses and is not satisfiable")
+    match cronexpr.parse("0 0 30 2 *")
+        Ok(s)  => test.assert(cronexpr.is_satisfiable(s) == false)
+        Err(_) => test.assert(false)
+
+    test.case("the 29th of February parses and fires every leap year")
+    match cronexpr.parse("0 0 29 2 *")
+        Ok(s)  => test.assert(cronexpr.is_satisfiable(s))
+        Err(_) => test.assert(false)
+
+    test.case("every minute is the identity a builder starts from")
+    let m = cronexpr.every_minute()
+    test.assert(cronexpr.format(m) == "* * * * *")
+    test.assert(cronfield.is_wildcard(cronexpr.field_of(m, CronFieldMinute)))

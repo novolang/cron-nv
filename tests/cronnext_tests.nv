@@ -1,0 +1,241 @@
+// cronnext_tests.nv — the next fire, and what the clocks do to it.
+//
+// RED ON PURPOSE: every body under `src/` is a `todo()`, so every
+// assertion here reaches `not implemented: cron-nv.<module>.<fn>`.
+// That is the expected result until the bodies land.
+//
+// THE DAYLIGHT-SAVING CASES ARE THE SUITE. A next-fire calculation
+// over a zone that never changes offset is arithmetic anybody can
+// write; what is worth testing is the two days a year when the wall
+// clock a cron expression talks about is not a clock at all. Berlin's
+// 2026 changes are the last Sundays of March and October, and the
+// instants below are what `zdump` prints for them.
+
+use std.test
+use std.list
+use iso8601
+use cronexpr
+use cronnext
+use tzdata
+use tzzone
+
+@test
+fn test_the_next_fire_is_a_wall_time_and_not_an_interval() [io]
+    let db = tzdata.data_compact()
+    match tzdata.zone(db, "Europe/Berlin")
+        Err(_) => test.assert(false)
+        Ok(z)  =>
+            match cronexpr.parse("0 9 * * 1")
+                Err(_) => test.assert(false)
+                Ok(s)  =>
+                    test.case("nine in the morning, local, on a Monday")
+                    // 2026-06-15 is a Monday; the search starts the
+                    // Friday before.
+                    let friday = 1_781_000_000
+                    match cronnext.next_after(s, z, friday, cronnext.default_dst())
+                        CronFireAt(_, local, offset) =>
+                            test.assert(local.time.hour == 9)
+                            test.assert(local.time.minute == 0)
+                            test.assert(offset == 7200)
+                        _                            => test.assert(false)
+
+                    test.case("the default policy is Vixie cron's")
+                    match cronnext.default_dst()
+                        CronDstRunOnce => test.assert(true)
+                        _              => test.assert(false)
+
+                    test.case("the search is bounded, and the bound is public")
+                    test.assert(cronnext.search_years() == 4)
+
+@test
+fn test_the_wall_time_stays_fixed_across_a_change_of_offset() [io]
+    // The whole argument for taking a zone: `previous + 604800` would
+    // put this fire at 08:00 after the clocks moved.
+    let db = tzdata.data_compact()
+    match tzdata.zone(db, "Europe/Berlin")
+        Err(_) => test.assert(false)
+        Ok(z)  =>
+            match cronexpr.parse("0 9 * * 1")
+                Err(_) => test.assert(false)
+                Ok(s)  =>
+                    test.case("the Monday before and the Monday after both read 09:00")
+                    // The last Sunday in October 2026 is the 25th.
+                    let before = 1_760_000_000
+                    let fires = cronnext.next_n(s, z, before, cronnext.default_dst(), 8)
+                    test.assert(list.len(fires) == 8)
+                    match cronnext.local_of(fires[0])
+                        Some(dt) => test.assert(dt.time.hour == 9)
+                        None     => test.assert(false)
+                    match cronnext.local_of(fires[7])
+                        Some(dt) => test.assert(dt.time.hour == 9)
+                        None     => test.assert(false)
+
+                    test.case("and the instants are not all a week apart")
+                    match cronnext.instant_of(fires[0])
+                        None    => test.assert(false)
+                        Some(a) =>
+                            match cronnext.instant_of(fires[7])
+                                Some(b) => test.assert(b - a != 7 * 604800)
+                                None    => test.assert(false)
+
+@test
+fn test_a_fire_the_clocks_skipped_is_reported_not_guessed() [io]
+    let db = tzdata.data_compact()
+    match tzdata.zone(db, "Europe/Berlin")
+        Err(_) => test.assert(false)
+        Ok(z)  =>
+            match cronexpr.parse("30 2 * * *")
+                Err(_) => test.assert(false)
+                Ok(s)  =>
+                    // 2026-03-28T12:00:00Z, the day before the spring
+                    // change; the next 02:30 is the one that does not
+                    // exist.
+                    let day_before = 1_774_699_200
+
+                    test.case("run-once moves it and says what it wanted")
+                    let f = cronnext.next_after(s, z, day_before, CronDstRunOnce)
+                    match f
+                        CronFireShifted(_, local, _, wanted) =>
+                            test.assert(wanted.time.hour == 2)
+                            test.assert(wanted.time.minute == 30)
+                            test.assert(local.time.hour == 3)
+                        _                                    => test.assert(false)
+                    test.assert(cronnext.is_dst_affected(f))
+                    test.assert(cronnext.dst_note(f) != "")
+
+                    test.case("skip passes over it to the next day")
+                    match cronnext.next_after(s, z, day_before, CronDstSkip)
+                        CronFireAt(_, local, _) => test.assert(local.date.day == 30)
+                        _                       => test.assert(false)
+
+@test
+fn test_a_fire_on_an_hour_that_happened_twice() [io]
+    let db = tzdata.data_compact()
+    match tzdata.zone(db, "Europe/Berlin")
+        Err(_) => test.assert(false)
+        Ok(z)  =>
+            match cronexpr.parse("30 2 * * *")
+                Err(_) => test.assert(false)
+                Ok(s)  =>
+                    // 2026-10-24T12:00:00Z, the day before the autumn
+                    // change.
+                    let day_before = 1_792_886_400
+
+                    test.case("run-once fires the first occurrence and no more")
+                    let once = cronnext.next_n(s, z, day_before, CronDstRunOnce, 2)
+                    match cronnext.local_of(once[0])
+                        Some(dt) => test.assert(dt.date.day == 25)
+                        None     => test.assert(false)
+                    match cronnext.local_of(once[1])
+                        Some(dt) => test.assert(dt.date.day == 26)
+                        None     => test.assert(false)
+
+                    test.case("run-both fires twice, an hour apart, and numbers them")
+                    let both = cronnext.next_n(s, z, day_before, CronDstRunBoth, 2)
+                    match both[0]
+                        CronFireRepeat(_, _, _, occurrence) => test.assert(occurrence == 1)
+                        _                                   => test.assert(false)
+                    match both[1]
+                        CronFireRepeat(at, _, _, occurrence) =>
+                            test.assert(occurrence == 2)
+                            test.assert(at > 0)
+                        _                                    => test.assert(false)
+
+@test
+fn test_a_missed_window_is_asked_for_backwards() [io]
+    let db = tzdata.data_compact()
+    match tzdata.zone(db, "Europe/Berlin")
+        Err(_) => test.assert(false)
+        Ok(z)  =>
+            match cronexpr.parse("0 * * * *")
+                Err(_) => test.assert(false)
+                Ok(s)  =>
+                    test.case("what a scheduler asks after an outage")
+                    let from = 1_781_000_000
+                    let to = 1_781_021_600
+                    test.assert(list.len(cronnext.fires_between(s, z, from, to,
+                                                                cronnext.default_dst())) == 6)
+
+                    test.case("and the last fire before it came back up")
+                    match cronnext.prev_before(s, z, to, cronnext.default_dst())
+                        CronFireAt(at, _, _) => test.assert(at < to)
+                        _                    => test.assert(false)
+
+                    test.case("a daemon that wakes every minute asks a match, not a search")
+                    test.assert(cronnext.matches_at(s, z, 1_781_020_800))
+
+@test
+fn test_a_schedule_that_never_fires_says_so_rather_than_looping() [io]
+    let db = tzdata.data_compact()
+    match tzdata.zone(db, "Europe/Berlin")
+        Err(_) => test.assert(false)
+        Ok(z)  =>
+            match cronexpr.parse("0 0 30 2 *")
+                Err(_) => test.assert(false)
+                Ok(s)  =>
+                    test.case("the 30th of February is CronFireNever")
+                    let f = cronnext.next_after(s, z, 1_781_000_000, cronnext.default_dst())
+                    test.assert(cronnext.is_never(f))
+                    test.assert(cronnext.instant_of(f) == None)
+                    test.assert(cronnext.local_of(f) == None)
+                    test.assert(cronnext.is_dst_affected(f) == false)
+                    test.assert(cronnext.dst_note(f) == "")
+
+                    test.case("and the reason names the field")
+                    match cronnext.explain_never(s, z)
+                        Ok(_)  => test.assert(false)
+                        Err(_) => test.assert(true)
+
+@test
+fn test_the_zone_free_half_is_pure_calendar_arithmetic() [io]
+    match cronexpr.parse("0 9 * * 1")
+        Err(_) => test.assert(false)
+        Ok(s)  =>
+            match iso8601.parse_datetime("2026-06-12T12:00:00")
+                Err(_) => test.assert(false)
+                Ok(dt) =>
+                    test.case("the next matching wall time, with no zone anywhere")
+                    match cronnext.next_civil_after(s, dt)
+                        None       => test.assert(false)
+                        Some(next) =>
+                            test.assert(next.date.day == 15)
+                            test.assert(next.time.hour == 9)
+                            test.assert(cronnext.matches_civil(s, next))
+                            test.assert(cronnext.matches_day(s, next.date))
+
+                    test.case("and the previous one")
+                    match cronnext.prev_civil_before(s, dt)
+                        Some(prev) => test.assert(prev.date.day == 8)
+                        None       => test.assert(false)
+
+@test
+fn test_the_union_rule_decides_which_days_match() [io]
+    // `0 0 13 * 5` is the 13th AND every Friday. June 2026's 13th is a
+    // Saturday, so the month has the 13th plus four Fridays.
+    match cronexpr.parse("0 0 13 * 5")
+        Err(_) => test.assert(false)
+        Ok(s)  =>
+            match iso8601.parse_datetime("2026-06-13T00:00:00")
+                Err(_) => test.assert(false)
+                Ok(dt) =>
+                    test.case("the 13th matches even though it is not a Friday")
+                    test.assert(cronnext.matches_day(s, dt.date))
+
+            match iso8601.parse_datetime("2026-06-12T00:00:00")
+                Err(_) => test.assert(false)
+                Ok(dt) =>
+                    test.case("and so does a Friday that is not the 13th")
+                    test.assert(cronnext.matches_day(s, dt.date))
+
+@test
+fn test_a_fixed_zone_has_no_daylight_saving_to_report() [io]
+    test.case("UTC never moves, so every fire is an ordinary one")
+    let z = tzzone.utc()
+    match cronexpr.parse("30 2 * * *")
+        Err(_) => test.assert(false)
+        Ok(s)  =>
+            let fires = cronnext.next_n(s, z, 1_774_699_200, CronDstRunBoth, 3)
+            test.assert(list.len(fires) == 3)
+            test.assert(cronnext.is_dst_affected(fires[0]) == false)
+            test.assert(cronnext.is_dst_affected(fires[1]) == false)
+            test.assert(cronnext.is_dst_affected(fires[2]) == false)

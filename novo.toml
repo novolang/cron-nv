@@ -1,0 +1,63 @@
+[package]
+name        = "cron-nv"
+version     = "0.0.1"
+description = "Crontab expressions as a typed value: five and six fields, names, ranges, steps and the Quartz extensions flagged as what they are, the next and previous fire computed in a zone over calendar-nv's civil time with the daylight-saving rule written down rather than implied, a human description of a schedule, and validation errors that name the field they came from.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`, and the absence a reader should check for is the clock.
+# There is none: `next_after` takes the instant to search from as an
+# argument, which is what makes a schedule testable without waiting and
+# what makes this package `[]`.  The host that reads a clock and sleeps
+# until the answer is a row nobody has written yet — the README names
+# it — and it will depend on this package and on chrono-nv.
+#
+# No device claim.  A schedule's arithmetic is civil-date arithmetic,
+# which is calendar-nv's, and calendar-nv makes no device claim of its
+# own; a probe naming one of its types would not link.  The honest form
+# of that is no `tests/embedded_probe.nv` at all, which the audit's
+# `core-embedded` row passes and says so on its own line.
+layer       = "core"
+
+category    = "time"
+
+tags        = ["cron", "crontab", "schedule", "croniter", "quartz", "dst", "sans-io"]
+repository  = "https://github.com/novolang/cron-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "A schedule is a statement about wall clocks, and the next fire says so"
+
+[dependencies]
+# Two `core` dependencies, and the second one is a SIBLING PATH while
+# this package is developed beside it.
+#
+# `path = "../tz-nv"` is how two packages are built together in one
+# checkout, and `novo pkg publish` refuses it — a tarball carrying a
+# path sends every consumer to a directory that is not on their
+# machine.  Before the first publish this line becomes the registry
+# range tz-nv is published at:
+#
+#     tz-nv = "^0.0.1"
+#
+# and under the caret rule that pins exactly 0.0.1, because a `0.0.x`
+# version has no compatible neighbours.  tz-nv has to be published
+# first: a package cannot be published ahead of what it depends on.
+#
+# WHY BOTH.  calendar-nv is the civil arithmetic — what day of the week
+# the 29th is, how many days February has — and tz-nv is the offset
+# that turns a wall time into an instant.  A cron expression needs
+# both, in that order, and the whole design of `cronnext` is that the
+# search runs in CIVIL time and the zone is applied at the end.
+calendar-nv = "^0.0.2"
+tz-nv       = "^0.0.1"

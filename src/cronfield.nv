@@ -1,0 +1,204 @@
+// cronfield.nv — one column of a crontab line, as a value.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// A FIELD IS A SET, AND THE SET IS THE REPRESENTATION. `*/15`,
+// `0,15,30,45` and `0-59/15` are three spellings of the same sixty-bit
+// set, and once a field is parsed they are the same value. That is
+// what makes `matches` a bit test rather than a walk over terms, and it
+// is what makes `next_after`'s inner loop fast enough to search a year
+// a minute at a time without anyone noticing.
+//
+// THE TERMS ARE KEPT ANYWAY, and that is a deliberate cost. A set
+// cannot be printed back as what somebody wrote, and two things need
+// that: `crondesc` says "every fifteen minutes" rather than "at 0, 15,
+// 30 and 45 minutes past", and a configuration tool that rewrites one
+// field of a line has to leave the other four alone. So a field
+// carries both — the set for matching, the terms for describing — and
+// the invariant is that the set is derived from the terms and never
+// edited on its own.
+//
+// THE QUARTZ EXTENSIONS CANNOT BE A SET AT ALL, which is the third
+// reason the terms are here. `L` in the day-of-month field means the
+// last day of THIS month, which is 28, 29, 30 or 31 depending on which
+// month it is; `5#3` means the third Friday, which is a different date
+// every month; `15W` means the weekday nearest the 15th, which may be
+// the 14th or the 16th. None of those is a fixed set of days, so a
+// field that carried only a bitset could not represent them. They are
+// terms, evaluated against a particular month by `cronnext`, and
+// `has_dynamic_terms` is how a caller finds out that a field's set
+// alone is not the whole answer.
+
+use cronerr
+
+// How a crontab line is spelled, and which extensions it may use.
+//
+// A value rather than a flag, because the three differ in field COUNT
+// as well as in what a field may contain, and a parser that guessed
+// the count from the token count would read `0 0 1 1 *` — midnight on
+// New Year's Day — as a six-field line with no minute in it.
+pub enum CronDialect
+    // Vixie cron's five fields: minute, hour, day of month, month, day
+    // of week. `@daily` and its family are accepted. No `L`, `W`, `#`
+    // or `?`.
+    CronDialectUnix
+    // The same five with a seconds field in front, which is what
+    // Jenkins, systemd's cron compatibility and most language
+    // libraries mean by "six-field cron".
+    CronDialectSixField
+    // Quartz: seconds, minutes, hours, day of month, month, day of
+    // week, and an optional year. `L`, `W`, `#` and `?` are in, and
+    // exactly one of the two day fields must be `?`.
+    CronDialectQuartz
+
+// One element of a field, before it became a set.
+//
+// The names are prefixed because a variant is constructed by name
+// across the whole assembly, and `Range` and `Step` are nouns half the
+// registry would want.
+pub enum CronTerm
+    // `*`.
+    CronTermAny
+    // `?` — Quartz's "no opinion", legal only in a day field and
+    // exactly once per line.
+    CronTermUnset
+    // A single number, or a name already resolved to one.
+    CronTermValue(value: Int)
+    // `lo-hi`, inclusive at both ends.
+    CronTermRange(low: Int, high: Int)
+    // `base/step`, where `base` is `CronTermAny`, a value or a range.
+    // The step is the stride, so `*/15` is a stride of 15 from the
+    // field's own low bound and `10-50/15` is one from 10.
+    CronTermStep(base_low: Int, base_high: Int, step: Int)
+    // `L` in the day-of-month field: the last day of the month. The
+    // offset is `L-3`'s three, so `0` is `L` itself.
+    CronTermLastOfMonth(offset: Int)
+    // `nW`: the weekday nearest the `n`th, never crossing into another
+    // month — so `1W` on a Saturday the 1st is Monday the 3rd and not
+    // the previous Friday.
+    CronTermNearestWeekday(day: Int)
+    // `d#n`: the `n`th weekday `d` of the month. `5#3` is the third
+    // Friday. `n` is `1-5`, and a month with only four of that weekday
+    // simply does not fire.
+    CronTermNthWeekday(weekday: Int, occurrence: Int)
+    // `dL`: the last weekday `d` of the month. `5L` is the last
+    // Friday.
+    CronTermLastWeekday(weekday: Int)
+
+// One parsed field.
+pub struct CronField
+    // Which column this is, which is what a refusal names and what
+    // decides the bounds.
+    kind: cronerr.CronFieldKind
+    // The values this field admits, as a bitset over the field's own
+    // range: bit `n - low` is set when `n` matches. Sixty bits for
+    // minutes and seconds, which fits an `Int` exactly, and the reason
+    // the representation stops there rather than growing a list.
+    //
+    // A field whose only terms are dynamic has an EMPTY set, and
+    // `has_dynamic_terms` is what tells a caller that is not the same
+    // as "matches nothing".
+    bits: Int
+    // The terms as written, in the order they were written, so the
+    // field can be described and printed back.
+    terms: [CronTerm]
+
+// Whether a value is in the field's set.
+//
+// The bit test alone: a field with dynamic terms answers `false` here
+// for days the extension would have matched, which is why `cronnext`
+// asks `matches_day` rather than this for the two day fields.
+//
+// ```novo
+// use cronfield
+//
+// fn main() [io]
+//     match cronfield.parse_field(CronFieldMinute, "*/15", CronDialectUnix)
+//         Ok(f)  =>
+//             if cronfield.matches(f, 30)
+//                 println("on the half hour")
+//             else
+//                 println("not on the half hour")
+//         Err(_) => println("not a field")
+// ```
+pub fn matches(f: CronField, value: Int) -> Bool []
+    todo("cron-nv.cronfield.matches")
+
+// Whether this field has a term whose meaning depends on the month it
+// is evaluated in — `L`, `W` or `#`.
+//
+// The fact that makes `bits` insufficient on its own, published so a
+// caller can see it rather than discover it.
+pub fn has_dynamic_terms(f: CronField) -> Bool []
+    todo("cron-nv.cronfield.has_dynamic_terms")
+
+// Whether the field is `*` — it admits everything and constrains
+// nothing.
+//
+// Load-bearing for the day rule: cron ORs the two day fields when both
+// are restricted and ANDs them when one is `*`, and this is the test
+// that decides which.
+pub fn is_wildcard(f: CronField) -> Bool []
+    todo("cron-nv.cronfield.is_wildcard")
+
+// Whether the field is Quartz's `?`.
+pub fn is_unset(f: CronField) -> Bool []
+    todo("cron-nv.cronfield.is_unset")
+
+// Every value the field's set admits, ascending.
+//
+// What a user interface lists. A field with dynamic terms answers only
+// its static values, and `has_dynamic_terms` is the caveat.
+pub fn values(f: CronField) -> [Int] []
+    todo("cron-nv.cronfield.values")
+
+// The smallest value at or above `from` that the field admits, or `?`
+// where there is none at or above it.
+//
+// `cronnext`'s inner call. Answering `?` rather than wrapping is what
+// lets the search carry the rollover itself — a minute field with no
+// value left in this hour is the signal to move the hour on, and a
+// wrapping answer would hide it.
+pub fn next_value(f: CronField, from: Int) -> ?Int []
+    todo("cron-nv.cronfield.next_value")
+
+// The largest value at or below `from` that the field admits, or `?`.
+pub fn prev_value(f: CronField, from: Int) -> ?Int []
+    todo("cron-nv.cronfield.prev_value")
+
+// Parse one field of a crontab line.
+//
+// Public because a form that validates one box at a time needs it, and
+// because the refusals are per-field and this is where they come from.
+pub fn parse_field(kind: cronerr.CronFieldKind, text: Str,
+                   dialect: CronDialect) -> Result<CronField, cronerr.CronError> []
+    todo("cron-nv.cronfield.parse_field")
+
+// A field that matches everything in its range.
+pub fn any_field(kind: cronerr.CronFieldKind) -> CronField []
+    todo("cron-nv.cronfield.any_field")
+
+// Write the field back out as a crontab token.
+//
+// From the terms, not from the set, so `*/15` comes back as `*/15`
+// rather than as `0,15,30,45` — which is what makes a tool that
+// rewrites one field of a line leave the rest recognisable.
+pub fn format_field(f: CronField) -> Str []
+    todo("cron-nv.cronfield.format_field")
+
+// The three-letter name a month or weekday number is written as:
+// `"JAN"`, `"SUN"`.
+//
+// Answers `""` for a field that has no names and for a number outside
+// the field's range.
+pub fn name_of(kind: cronerr.CronFieldKind, value: Int) -> Str []
+    todo("cron-nv.cronfield.name_of")
+
+// The number a name means in this field, or `?` where the field does
+// not know the name.
+//
+// Case-insensitive, because every crontab implementation accepts
+// `mon`, `Mon` and `MON` and a parser that did not would refuse lines
+// that have been working for thirty years.
+pub fn value_of_name(kind: cronerr.CronFieldKind, name: Str) -> ?Int []
+    todo("cron-nv.cronfield.value_of_name")

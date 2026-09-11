@@ -1,0 +1,126 @@
+// cronerr.nv — what a bad crontab line is, said by field.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// EVERY REFUSAL NAMES THE FIELD, and that is the whole reason this
+// module exists rather than a `?Schedule` somewhere. A crontab line is
+// five tokens a person typed into a configuration file, and
+// "malformed" sends them back to a line they have already read four
+// times. `CronBadValue(CronFieldDayOfWeek, 8, 0, 7)` tells them their
+// week has eight days in it, which is a thing they can fix.
+//
+// AND THE COLUMN, WHERE THERE IS ONE. The byte offset into the
+// expression is carried on every variant that has one, so an editor can
+// underline the token rather than the line. `offset_of` answers `-1`
+// for the refusals that are about the expression as a whole.
+//
+// WHAT IS NOT AN ERROR. A schedule that will never fire again is not a
+// refusal — `30 2 30 2 *` is a perfectly well-formed way to say "the
+// 30th of February", and `cronnext.next_after` answers `CronFireNever`
+// for it. That is a real answer and a scheduler wants to log it rather
+// than crash on it; a parser that refused the expression would be
+// deciding something the parser cannot see, because `29 2` IS valid
+// and fires every leap year.
+
+// Which of a crontab line's fields something is wrong in.
+//
+// Public because it appears in every refusal, and because a caller
+// building a form wants to put the message under the right box.
+pub enum CronFieldKind
+    // `0-59`, and always present.
+    CronFieldSecond
+    CronFieldMinute
+    CronFieldHour
+    // `1-31`, with `L` and `W` in the Quartz dialect.
+    CronFieldDayOfMonth
+    // `1-12`, and `JAN`-`DEC`.
+    CronFieldMonth
+    // `0-7`, `SUN`-`SAT`, with both `0` and `7` meaning Sunday, and
+    // `L` and `#` in the Quartz dialect.
+    CronFieldDayOfWeek
+    // Quartz only, `1970-2099`.
+    CronFieldYear
+    // The line as a whole, for the refusals that are not about one
+    // field: a field count that does not match the dialect, or an
+    // empty string.
+    CronFieldWhole
+
+// What is wrong with a crontab expression.
+pub enum CronError
+    // The line has the wrong number of fields for the dialect it was
+    // parsed under. Both numbers are carried, because "expected 5,
+    // found 6" is the message that tells somebody they pasted a
+    // Quartz line into a Unix crontab.
+    CronBadFieldCount(found: Int, expected: Int)
+    // A number is outside the field's range. The bounds are carried so
+    // the message can state them without the caller knowing them.
+    CronBadValue(field: CronFieldKind, value: Int, low: Int, high: Int)
+    // A name is not one this field knows — `MAR` in an hour field,
+    // `FRIDAY` where `FRI` was wanted.
+    CronBadName(field: CronFieldKind, text: Str, at: Int)
+    // A range runs backwards: `FRI-MON`. Refused rather than wrapped,
+    // because the two readings — "Friday through Monday, the long way"
+    // and "nothing" — are both defensible and both wrong for somebody.
+    // `FRI-SUN,MON` is the spelling that means the first.
+    CronBadRange(field: CronFieldKind, low: Int, high: Int, at: Int)
+    // A step is zero, negative, or wider than the field.
+    CronBadStep(field: CronFieldKind, step: Int, at: Int)
+    // The token does not parse at all: a stray character, an empty
+    // element between two commas, an unclosed name.
+    CronBadToken(field: CronFieldKind, at: Int)
+    // The dialect does not have this extension. `L`, `W` and `#` are
+    // Quartz's, and a Unix crontab that used one would be a line that
+    // works here and does nothing on the machine it was written for.
+    CronNotInDialect(field: CronFieldKind, text: Str, at: Int)
+    // `#` was given an occurrence outside `1-5`, or `W` a day outside
+    // `1-31`. Separate from `CronBadValue` because the number is the
+    // extension's argument rather than the field's value.
+    CronBadExtensionArg(field: CronFieldKind, value: Int, at: Int)
+    // Quartz requires exactly one of the two day fields to be `?`, and
+    // this line has `?` in both or in neither. Vixie cron has no `?`
+    // at all and this refusal cannot arise there.
+    CronDayFieldConflict(at: Int)
+    // The expression is empty, or nothing but whitespace.
+    CronEmptyExpression
+
+// A refusal says what it is, in one line, naming the field and the
+// value.
+//
+// The `Error` impl rather than a free function, because `Result`
+// requires it: a payload that does not implement `Error` is refused at
+// the signature (SPEC § 3.4).
+//
+// ```novo
+// use cronerr
+//
+// fn main() [io]
+//     println(CronBadValue(CronFieldDayOfWeek, 8, 0, 7).message())
+// ```
+impl Error for CronError
+    fn message(self) -> Str
+        todo("cron-nv.CronError.message")
+
+// Which field the refusal is about.
+pub fn field_of(e: CronError) -> CronFieldKind []
+    todo("cron-nv.cronerr.field_of")
+
+// The byte offset into the expression the refusal is at, or `-1` where
+// the refusal is about the line as a whole.
+pub fn offset_of(e: CronError) -> Int []
+    todo("cron-nv.cronerr.offset_of")
+
+// The field's name as a person writes it: `"minute"`, `"day of week"`.
+//
+// Used by `message`, and public because a caller building its own
+// message wants the same words.
+pub fn field_name(k: CronFieldKind) -> Str []
+    todo("cron-nv.cronerr.field_name")
+
+// The inclusive bounds a field's values must fall in, as a pair.
+//
+// `CronFieldDayOfWeek` answers `(0, 7)`, because both ends are Sunday
+// — which is the one range in cron that has eight values in seven days
+// and the reason this is a published fact rather than a constant in a
+// parser.
+pub fn field_bounds(k: CronFieldKind) -> (Int, Int) []
+    todo("cron-nv.cronerr.field_bounds")

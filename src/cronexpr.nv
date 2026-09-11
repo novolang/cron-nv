@@ -1,0 +1,166 @@
+// cronexpr.nv — a crontab line, parsed once into a value.
+//
+// Every body here is a `todo()`; the signatures are the design.
+//
+// PARSE ONCE, FIRE MANY. A scheduler holds a hundred schedules and
+// asks each of them for a next fire every time it wakes. Parsing on
+// every question would be the whole cost of the scheduler, so a
+// `CronSchedule` is a value: seven parsed fields and the dialect it was
+// read under, and nothing in `cronnext` ever looks at the string
+// again.
+//
+// THE SOURCE IS KEPT, and it is not sentiment. A scheduler logging
+// "job 41 will next run at…" wants to say WHICH schedule, and a
+// schedule printed back from its fields is a schedule nobody typed.
+// `source` is what the operator wrote; `format` is the canonical
+// spelling; and the two being different is normal.
+//
+// THE TWO DAY FIELDS ARE THE ONE RULE EVERYBODY GETS WRONG, so it is
+// stated here rather than buried in `cronnext`: when day-of-month and
+// day-of-week are BOTH restricted, cron takes the UNION — the job runs
+// on either. When one of them is `*`, it takes the intersection, which
+// is to say the `*` constrains nothing. So
+//
+//     0 0 13 * 5      midnight on the 13th, AND on every Friday
+//     0 0 13 * *      midnight on the 13th
+//     0 0 * * 5       midnight on every Friday
+//
+// and the first of those is not "Friday the 13th". It is POSIX's rule
+// and Vixie's implementation, it is what every crontab on every server
+// does, and a library that quietly ANDed them would produce a schedule
+// that fires a twelfth as often as the operator expects.
+// `fires_on_either_day` is the predicate, published so a caller can
+// see which rule a particular schedule is under.
+
+use cronerr
+use cronfield
+
+// A crontab expression, parsed.
+pub struct CronSchedule
+    // The expression as it was written, verbatim.
+    source: Str
+    // Which dialect it was read under, which decides the field count
+    // and the extensions.
+    dialect: cronfield.CronDialect
+    // `0-59`. Always present: a five-field line gets a seconds field
+    // holding the single value `0`, so every schedule has the same
+    // shape and `cronnext` has one search rather than two.
+    second: cronfield.CronField
+    minute: cronfield.CronField
+    hour: cronfield.CronField
+    day_of_month: cronfield.CronField
+    month: cronfield.CronField
+    day_of_week: cronfield.CronField
+    // `1970-2099`, Quartz only. A line without one gets a field that
+    // matches every year.
+    year: cronfield.CronField
+
+// Parse a five-field Vixie crontab line.
+//
+// The default, because it is what `/etc/crontab` holds and what
+// somebody pasting a line from a wiki has. `@daily` and its family are
+// accepted here and nowhere else.
+//
+// ```novo
+// use cronexpr
+//
+// fn main() [io]
+//     match cronexpr.parse("0 9 * * 1")
+//         Ok(s)  => println(s.source)
+//         Err(_) => println("not a crontab line")
+// ```
+pub fn parse(text: Str) -> Result<CronSchedule, cronerr.CronError> []
+    todo("cron-nv.cronexpr.parse")
+
+// Parse a line under a named dialect.
+//
+// The dialect is an argument rather than something guessed from the
+// token count, because `0 0 1 1 *` is a valid five-field line
+// (midnight on New Year's Day) and a valid six-field one (the first
+// second of every minute in January), and the two are not close.
+pub fn parse_with(text: Str,
+                  dialect: cronfield.CronDialect) -> Result<CronSchedule, cronerr.CronError> []
+    todo("cron-nv.cronexpr.parse_with")
+
+// Parse one of the `@` shorthands: `@yearly`, `@annually`,
+// `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+//
+// `@reboot` is NOT here, and the omission is the point: it is not a
+// schedule at all — it is an instruction to a daemon about its own
+// start-up, and it has no next fire to compute. A caller handling a
+// crontab file checks for it before calling this.
+pub fn parse_shorthand(text: Str) -> Result<CronSchedule, cronerr.CronError> []
+    todo("cron-nv.cronexpr.parse_shorthand")
+
+// Whether the text is one of the `@` shorthands.
+pub fn is_shorthand(text: Str) -> Bool []
+    todo("cron-nv.cronexpr.is_shorthand")
+
+// Check a line without building a schedule.
+//
+// Answers every refusal the line has rather than the first, because a
+// person fixing a crontab entry with three mistakes in it should be
+// told about three. An empty list is a line that parses.
+pub fn check(text: Str, dialect: cronfield.CronDialect) -> [cronerr.CronError] []
+    todo("cron-nv.cronexpr.check")
+
+// Write the schedule back out as a canonical crontab line.
+//
+// From the fields' terms, so `*/15` stays `*/15`. Not necessarily the
+// source: `MON` comes back as `MON`, but `@daily` comes back as
+// `0 0 * * *`, because the shorthand is a spelling of a schedule and
+// not a schedule of its own.
+pub fn format(s: CronSchedule) -> Str []
+    todo("cron-nv.cronexpr.format")
+
+// Whether the two day fields are both restricted, so the schedule
+// fires on EITHER rather than on both.
+//
+// The POSIX rule, as a question a caller can ask about a particular
+// line. A scheduler's user interface that showed "runs on the 13th and
+// on Fridays" for `0 0 13 * 5` would be correct; one that showed
+// "Friday the 13th" would not.
+pub fn fires_on_either_day(s: CronSchedule) -> Bool []
+    todo("cron-nv.cronexpr.fires_on_either_day")
+
+// Whether the schedule uses any Quartz extension — `L`, `W`, `#` or
+// `?`.
+//
+// Published because it is the question a tool asks before writing a
+// line into a Unix crontab: an expression with a `#` in it is a line
+// that works in this library and silently does nothing on the machine
+// it is installed on.
+pub fn uses_extensions(s: CronSchedule) -> Bool []
+    todo("cron-nv.cronexpr.uses_extensions")
+
+// Whether the schedule can ever fire.
+//
+// `false` for `0 0 30 2 *` — the 30th of February — and for nothing
+// else that parses. It is a separate question from parsing on purpose:
+// `0 0 29 2 *` is a schedule that fires every leap year, so a parser
+// cannot refuse an impossible date without also refusing a rare one.
+pub fn is_satisfiable(s: CronSchedule) -> Bool []
+    todo("cron-nv.cronexpr.is_satisfiable")
+
+// A schedule that fires once a minute, every minute — `* * * * *`.
+//
+// The identity a caller starts from when building a schedule field by
+// field rather than parsing one.
+pub fn every_minute() -> CronSchedule []
+    todo("cron-nv.cronexpr.every_minute")
+
+// The field a `CronFieldKind` names, out of a schedule.
+//
+// So a caller iterating the seven columns — a form, a diff, a
+// description — does not need seven accessors.
+pub fn field_of(s: CronSchedule, kind: cronerr.CronFieldKind) -> cronfield.CronField []
+    todo("cron-nv.cronexpr.field_of")
+
+// Whether two schedules admit exactly the same set of times.
+//
+// `*/15` and `0,15,30,45` are equal; `@daily` and `0 0 * * *` are
+// equal; a five-field line and its six-field spelling with `0` seconds
+// are equal. What a configuration tool uses to decide a change is a
+// no-op and to leave the operator's own spelling alone.
+pub fn equivalent(a: CronSchedule, b: CronSchedule) -> Bool []
+    todo("cron-nv.cronexpr.equivalent")
