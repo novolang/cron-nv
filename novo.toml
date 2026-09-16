@@ -1,6 +1,6 @@
 [package]
 name        = "cron-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "Crontab expressions as a typed value: five and six fields, names, ranges, steps and the Quartz extensions flagged as what they are, the next and previous fire computed in a zone over calendar-nv's civil time with the daylight-saving rule written down rather than implied, a human description of a schedule, and validation errors that name the field they came from.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 
