@@ -39,20 +39,14 @@ novo        = ">= 0.8.9"
 "README.md" = "A schedule is a statement about wall clocks, and the next fire says so"
 
 [dependencies]
-# Two `core` dependencies, and the second one is a SIBLING PATH while
-# this package is developed beside it.
-#
-# `path = "../tz-nv"` is how two packages are built together in one
-# checkout, and `novo pkg publish` refuses it — a tarball carrying a
-# path sends every consumer to a directory that is not on their
-# machine.  Before the first publish this line becomes the registry
-# range tz-nv is published at:
-#
-#     tz-nv = "^0.0.1"
-#
-# and under the caret rule that pins exactly 0.0.1, because a `0.0.x`
-# version has no compatible neighbours.  tz-nv has to be published
-# first: a package cannot be published ahead of what it depends on.
+# Two `core` dependencies.  tz-nv was a SIBLING PATH, `path = "../tz-nv"`,
+# while the two packages were developed in one checkout; `novo pkg
+# publish` refuses a path — a tarball carrying one sends every consumer
+# to a directory that is not on their machine — so the line is the
+# registry range tz-nv is published at, and under the caret rule
+# `^0.0.1` pins exactly 0.0.1, because a `0.0.x` version has no
+# compatible neighbours.  tz-nv was published first: a package cannot be
+# published ahead of what it depends on.
 #
 # WHY BOTH.  calendar-nv is the civil arithmetic — what day of the week
 # the 29th is, how many days February has — and tz-nv is the offset
