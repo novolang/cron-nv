@@ -1,6 +1,6 @@
 [package]
 name        = "cron-nv"
-version     = "0.0.2"
+version     = "0.0.3"
 description = "Crontab expressions as a typed value: five and six fields, names, ranges, steps and the Quartz extensions flagged as what they are, the next and previous fire computed in a zone over calendar-nv's civil time with the daylight-saving rule written down rather than implied, a human description of a schedule, and validation errors that name the field they came from.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 
@@ -53,5 +53,5 @@ novo        = ">= 0.8.9"
 # that turns a wall time into an instant.  A cron expression needs
 # both, in that order, and the whole design of `cronnext` is that the
 # search runs in CIVIL time and the zone is applied at the end.
-calendar-nv = "^0.0.2"
-tz-nv       = "^0.0.1"
+calendar-nv = "^0.2.0"
+tz-nv       = "^0.1.0"
